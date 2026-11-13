@@ -149,6 +149,19 @@ final class PluginTest extends WP_Ajax_UnitTestCase {
 		$this->assertSame( array( 0, 0, 0 ), array_map( array( $this, 'menu_order' ), $kids ) );
 	}
 
+	public function test_refuses_duplicate_ids_that_would_pass_a_count_check(): void {
+		list( , , $kids ) = $this->tree();
+		$out = $this->call( $this->request( array( $kids[0], $kids[0], $kids[1] ) ) );
+		$this->assertFalse( $out['success'] );
+		$this->assertSame( array( 0, 0, 0 ), array_map( array( $this, 'menu_order' ), $kids ) );
+	}
+
+	public function test_sibling_totals_only_count_statuses_the_list_shows(): void {
+		list( $p ) = $this->tree();
+		self::factory()->post->create( array( 'post_type' => 'section', 'post_parent' => $p, 'post_status' => 'trash' ) );
+		$this->assertSame( 3, Plugin::sibling_totals( 'section' )[ $p ] );
+	}
+
 	public function test_sibling_totals_tell_the_list_when_a_group_is_split_across_pages(): void {
 		list( $p, $q ) = $this->tree();
 		$totals = Plugin::sibling_totals( 'section' );

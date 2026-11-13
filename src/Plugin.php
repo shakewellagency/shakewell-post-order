@@ -235,6 +235,8 @@ final class Plugin {
 		$paged    = $wp_query instanceof WP_Query ? max( 1, (int) $wp_query->get( 'paged' ) ) : 1;
 		$groups   = array();
 		if ( $screen->post_type && is_post_type_hierarchical( $screen->post_type ) && $wp_query instanceof WP_Query ) {
+			// Core queries a hierarchical list without paging (posts_per_page -1) and pages it in PHP, so
+			// $wp_query->posts holds every post of the type: these are the parents that may appear on this page.
 			$totals = self::sibling_totals( $screen->post_type );
 			foreach ( $wp_query->posts as $post ) {
 				$groups[ (int) $post->post_parent ] = $totals[ (int) $post->post_parent ] ?? 0;
@@ -250,7 +252,7 @@ final class Plugin {
 				'nonce'   => wp_create_nonce( self::AJAX ),
 				'offset'  => max( 0, $per_page ) * ( $paged - 1 ),
 				'groups'  => $groups ? $groups : null,
-				'partial' => __( 'Some items have siblings on another page of this list, so those items cannot be reordered here. Show more items per page under Screen Options to reorder them.', 'shakewell-post-order' ),
+				'partial' => __( 'Items cannot be reordered here when some of their siblings are on another page of this list (show more items per page under Screen Options) or are hidden from it, such as private items you cannot read.', 'shakewell-post-order' ),
 				'illegal' => __( 'An item can only be moved among items with the same parent.', 'shakewell-post-order' ),
 				'saved'   => __( 'Order saved.', 'shakewell-post-order' ),
 				'failed'  => __( 'The order could not be saved. Reload the page and try again.', 'shakewell-post-order' ),
@@ -262,8 +264,17 @@ final class Plugin {
 	}
 
 	/**
+	 * The list's visible statuses as a quoted SQL list.
+	 */
+	private static function statuses(): string {
+		global $wpdb;
+		$stati = array_values( get_post_stati( array( 'show_in_admin_all_list' => true ) ) );
+		return $wpdb->prepare( implode( ',', array_fill( 0, count( $stati ), '%s' ) ), $stati ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Placeholders only.
+	}
+
+	/**
 	 * Post IDs and menu_order of a type, in list order, optionally only the children of one parent.
-	 * Trashed and auto-draft posts are left out, as in the "All" list view.
+	 * Only statuses the "All" list view shows are counted.
 	 *
 	 * @param string   $type      Post type.
 	 * @param int|null $parent_id Parent ID, or null for every post of the type.
@@ -271,10 +282,11 @@ final class Plugin {
 	 */
 	private static function rows( string $type, ?int $parent_id = null ): array {
 		global $wpdb;
-		$where = null === $parent_id ? '' : $wpdb->prepare( 'AND post_parent = %d', $parent_id );
+		$statuses = self::statuses();
+		$where    = null === $parent_id ? '' : $wpdb->prepare( 'AND post_parent = %d', $parent_id );
 		return $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
 			$wpdb->prepare(
-				"SELECT ID, menu_order FROM {$wpdb->posts} WHERE post_type = %s AND post_status NOT IN ('trash', 'auto-draft') {$where} ORDER BY menu_order ASC, post_title ASC, ID ASC", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				"SELECT ID, menu_order FROM {$wpdb->posts} WHERE post_type = %s AND post_status IN ({$statuses}) {$where} ORDER BY menu_order ASC, post_title ASC, ID ASC", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 				$type
 			),
 			OBJECT_K
@@ -289,9 +301,10 @@ final class Plugin {
 	 */
 	public static function sibling_totals( string $type ): array {
 		global $wpdb;
-		$found = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+		$statuses = self::statuses();
+		$found    = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
 			$wpdb->prepare(
-				"SELECT post_parent, COUNT(*) AS total FROM {$wpdb->posts} WHERE post_type = %s AND post_status NOT IN ('trash', 'auto-draft') GROUP BY post_parent", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				"SELECT post_parent, COUNT(*) AS total FROM {$wpdb->posts} WHERE post_type = %s AND post_status IN ({$statuses}) GROUP BY post_parent", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 				$type
 			)
 		);
@@ -333,7 +346,7 @@ final class Plugin {
 		if ( is_post_type_hierarchical( $type ) ) {
 			// The parent comes from the database, never from the request. Same parent, whole group, or nothing.
 			$siblings = self::rows( $type, array_key_first( $parents ) );
-			if ( count( $parents ) > 1 || count( $siblings ) !== count( $ids ) || array_diff_key( array_flip( $ids ), $siblings ) ) {
+			if ( count( $parents ) > 1 || count( $siblings ) !== count( $ids ) || count( array_unique( $ids ) ) !== count( $ids ) || array_diff_key( array_flip( $ids ), $siblings ) ) {
 				wp_send_json_error( null, 400 );
 			}
 			$current = wp_list_pluck( $siblings, 'menu_order' );

@@ -59,7 +59,12 @@
 		var all = rows();
 		var from = all.index( members.first() );
 		var to = all.index( members.last() ) + block( members.last() ).length - 1;
-		return all.slice( from, to + 1 ).filter( function () {
+		// The row after the moved block must not be nested under a sibling: that would split the sibling from its children.
+		var after = block( row ).last().nextAll( rowSelector ).first();
+		var split = after.length && members.not( row ).filter( function () {
+			return isDescendant( after[ 0 ], idOf( this ) );
+		} ).length > 0;
+		return ! split && all.slice( from, to + 1 ).filter( function () {
 			var x = idOf( this );
 			while ( x && '0' !== x ) {
 				if ( parentOf[ x ] === parent ) {
@@ -110,6 +115,19 @@
 		$( '.wp-header-end' ).after( $( '<div class="notice notice-info"></div>' ).append( $( '<p></p>' ).text( cfg.partial ) ) );
 	}
 
+	// Quick Edit can change a parent. The page's sibling groups are then out of date, so start again from the server.
+	$( document ).ajaxComplete( function ( e, xhr, settings ) {
+		var data = String( settings.data || '' );
+		var post = /(?:^|&)post_ID=(\d+)/.exec( data );
+		if ( ! cfg.groups || ! /(?:^|&)action=inline-save(?:&|$)/.test( data ) || ! post ) {
+			return;
+		}
+		var button = $( '#post-' + post[ 1 ] ).find( '.shakewell-post-order-move' ).first();
+		if ( button.length && String( button.data( 'parent' ) ) !== parentOf[ post[ 1 ] ] ) {
+			window.location.reload();
+		}
+	} );
+
 	var dragged = null;
 	var origin = null;
 
@@ -128,6 +146,10 @@
 			dragged = null;
 			if ( isLegal( ui.item[ 0 ] ) ) {
 				save( parentOf[ idOf( ui.item[ 0 ] ) ] );
+				return;
+			}
+			if ( origin.length && ! $.contains( list[ 0 ], origin[ 0 ] ) ) {
+				window.location.reload();
 				return;
 			}
 			var back = block( ui.item[ 0 ] );
