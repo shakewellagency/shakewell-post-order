@@ -4,7 +4,7 @@ Tags: order, sort, drag and drop, menu order
 Requires at least: 6.5
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 0.1.0
+Stable tag: 0.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -18,7 +18,7 @@ The order is saved in WordPress's own `menu_order` field, so a theme or plugin c
 
 Nothing is enabled by default. Developers can set the post types in code with the `shakewell_post_order_post_types` filter, which receives the saved list.
 
-Pages and other hierarchical post types are not offered. Reordering works on the unfiltered list sorted by the default order. Only the posts on the page you are viewing are reordered, and their positions continue from the previous page. Saving checks a nonce and that you may edit every post involved. Deleting the plugin removes its one setting and leaves every `menu_order` value in place.
+Hierarchical post types can be ordered too: an item moves only among items with the same parent, together with its children, and a group whose siblings are split across list pages is locked with a notice until all of them are on one page (raise Screen Options > Number of items per page). Reordering works on the unfiltered list sorted by the default order. Only the posts on the page you are viewing are reordered, and their positions continue from the previous page. Saving checks a nonce and that you may edit every post involved. Deleting the plugin removes its one setting and leaves every `menu_order` value in place.
 
 = External services =
 
@@ -41,6 +41,9 @@ No. It only changes the admin list and writes `menu_order`.
 Please do not open a public issue. Follow SECURITY.md in the plugin's repository.
 
 == Changelog ==
+
+= 0.2.0 =
+* Hierarchical post types can be ordered among siblings of the same parent.
 
 = 0.1.0 =
 * First release.

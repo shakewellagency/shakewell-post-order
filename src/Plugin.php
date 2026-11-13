@@ -35,17 +35,15 @@ final class Plugin {
 	}
 
 	/**
-	 * Post types that can be ordered, as objects keyed by name. Hierarchical types are left out: their list
-	 * is paged in PHP and grouped by parent, so a flat page order cannot describe it.
+	 * Post types that can be ordered, as objects keyed by name.
 	 *
 	 * @return \WP_Post_Type[]
 	 */
 	public static function eligible(): array {
 		return get_post_types(
 			array(
-				'public'       => true,
-				'show_ui'      => true,
-				'hierarchical' => false,
+				'public'  => true,
+				'show_ui' => true,
 			),
 			'objects'
 		);
@@ -132,7 +130,7 @@ final class Plugin {
 				<?php settings_fields( 'shakewell_post_order' ); ?>
 				<fieldset>
 					<legend class="screen-reader-text"><?php esc_html_e( 'Post types with drag-and-drop ordering', 'shakewell-post-order' ); ?></legend>
-					<p><?php esc_html_e( 'Choose the post types you can reorder from their list screen. The order is saved in each item\'s menu_order field. Pages and other hierarchical types are not offered.', 'shakewell-post-order' ); ?></p>
+					<p><?php esc_html_e( 'Choose the post types you can reorder from their list screen. The order is saved in each item\'s menu_order field.', 'shakewell-post-order' ); ?></p>
 					<?php if ( self::enabled() !== $enabled ) : ?>
 						<p><strong><?php esc_html_e( 'The shakewell_post_order_post_types filter changes the post types in use, so the choice below may not apply.', 'shakewell-post-order' ); ?></strong></p>
 					<?php endif; ?>
@@ -160,7 +158,8 @@ final class Plugin {
 			return;
 		}
 		$type = $query->get( 'post_type' );
-		if ( is_string( $type ) && in_array( $type, self::enabled(), true ) ) {
+		// A hierarchical list already sorts by menu_order then title, grouped by parent.
+		if ( is_string( $type ) && in_array( $type, self::enabled(), true ) && ! is_post_type_hierarchical( $type ) ) {
 			$query->set(
 				'orderby',
 				array(
@@ -212,11 +211,12 @@ final class Plugin {
 		}
 		$title = get_the_title( $id );
 		printf(
-			'<button type="button" class="button-link shakewell-post-order-move" data-dir="-1">%1$s</button> <button type="button" class="button-link shakewell-post-order-move" data-dir="1">%2$s</button>',
+			'<button type="button" class="button-link shakewell-post-order-move" data-dir="-1" data-parent="%3$d">%1$s</button> <button type="button" class="button-link shakewell-post-order-move" data-dir="1" data-parent="%3$d">%2$s</button>',
 			/* translators: %s: post title */
 			esc_html( sprintf( __( 'Move up: %s', 'shakewell-post-order' ), $title ) ),
 			/* translators: %s: post title */
-			esc_html( sprintf( __( 'Move down: %s', 'shakewell-post-order' ), $title ) )
+			esc_html( sprintf( __( 'Move down: %s', 'shakewell-post-order' ), $title ) ),
+			(int) wp_get_post_parent_id( $id )
 		);
 	}
 
@@ -233,6 +233,15 @@ final class Plugin {
 		}
 		$per_page = $wp_query instanceof WP_Query ? (int) $wp_query->get( 'posts_per_page' ) : 0;
 		$paged    = $wp_query instanceof WP_Query ? max( 1, (int) $wp_query->get( 'paged' ) ) : 1;
+		$groups   = array();
+		if ( $screen->post_type && is_post_type_hierarchical( $screen->post_type ) && $wp_query instanceof WP_Query ) {
+			// Core queries a hierarchical list without paging (posts_per_page -1) and pages it in PHP, so
+			// $wp_query->posts holds every post of the type: these are the parents that may appear on this page.
+			$totals = self::sibling_totals( $screen->post_type );
+			foreach ( $wp_query->posts as $post ) {
+				$groups[ (int) $post->post_parent ] = $totals[ (int) $post->post_parent ] ?? 0;
+			}
+		}
 		wp_enqueue_script( 'shakewell-post-order', plugins_url( 'assets/order.js', FILE ), array( 'jquery-ui-sortable', 'wp-a11y' ), VERSION, true );
 		wp_localize_script(
 			'shakewell-post-order',
@@ -242,6 +251,9 @@ final class Plugin {
 				'action'  => self::AJAX,
 				'nonce'   => wp_create_nonce( self::AJAX ),
 				'offset'  => max( 0, $per_page ) * ( $paged - 1 ),
+				'groups'  => $groups ? $groups : null,
+				'partial' => __( 'Items cannot be reordered here when some of their siblings are on another page of this list (show more items per page under Screen Options) or are hidden from it, such as private items you cannot read.', 'shakewell-post-order' ),
+				'illegal' => __( 'An item can only be moved among items with the same parent.', 'shakewell-post-order' ),
 				'saved'   => __( 'Order saved.', 'shakewell-post-order' ),
 				'failed'  => __( 'The order could not be saved. Reload the page and try again.', 'shakewell-post-order' ),
 				/* translators: %d: new position in the list */
@@ -252,7 +264,58 @@ final class Plugin {
 	}
 
 	/**
-	 * AJAX: stores the submitted order of one page of one post type.
+	 * The list's visible statuses as a quoted SQL list.
+	 */
+	private static function statuses(): string {
+		global $wpdb;
+		$stati = array_values( get_post_stati( array( 'show_in_admin_all_list' => true ) ) );
+		return $wpdb->prepare( implode( ',', array_fill( 0, count( $stati ), '%s' ) ), $stati ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Placeholders only.
+	}
+
+	/**
+	 * Post IDs and menu_order of a type, in list order, optionally only the children of one parent.
+	 * Only statuses the "All" list view shows are counted.
+	 *
+	 * @param string   $type      Post type.
+	 * @param int|null $parent_id Parent ID, or null for every post of the type.
+	 * @return array<int,object> Keyed by ID.
+	 */
+	private static function rows( string $type, ?int $parent_id = null ): array {
+		global $wpdb;
+		$statuses = self::statuses();
+		$where    = null === $parent_id ? '' : $wpdb->prepare( 'AND post_parent = %d', $parent_id );
+		return $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+			$wpdb->prepare(
+				"SELECT ID, menu_order FROM {$wpdb->posts} WHERE post_type = %s AND post_status IN ({$statuses}) {$where} ORDER BY menu_order ASC, post_title ASC, ID ASC", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$type
+			),
+			OBJECT_K
+		);
+	}
+
+	/**
+	 * How many posts each parent has, for one type: the size a sibling group must have to be reordered.
+	 *
+	 * @param string $type Post type.
+	 * @return array<int,int> Parent ID => child count.
+	 */
+	public static function sibling_totals( string $type ): array {
+		global $wpdb;
+		$statuses = self::statuses();
+		$found    = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+			$wpdb->prepare(
+				"SELECT post_parent, COUNT(*) AS total FROM {$wpdb->posts} WHERE post_type = %s AND post_status IN ({$statuses}) GROUP BY post_parent", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$type
+			)
+		);
+		return array_map( 'intval', wp_list_pluck( $found, 'total', 'post_parent' ) );
+	}
+
+	/**
+	 * AJAX: stores the submitted order.
+	 *
+	 * A flat type is renumbered as a whole, with the submitted page at its offset. A hierarchical type must
+	 * submit one complete sibling group (every child of one parent), which is numbered on its own.
 	 */
 	public static function save(): void {
 		check_ajax_referer( self::AJAX, 'nonce' );
@@ -265,32 +328,39 @@ final class Plugin {
 			wp_send_json_error( null, 400 );
 		}
 
-		$types = array();
+		$types   = array();
+		$parents = array();
 		foreach ( $ids as $id ) {
 			$post = get_post( $id );
 			if ( ! $post || ! current_user_can( 'edit_post', $id ) ) {
 				wp_send_json_error( null, 403 );
 			}
-			$types[ $post->post_type ] = true;
+			$types[ $post->post_type ]           = true;
+			$parents[ (int) $post->post_parent ] = true;
 		}
 		$type = array_key_first( $types );
 		if ( count( $types ) > 1 || ! in_array( $type, self::enabled(), true ) ) {
 			wp_send_json_error( null, 400 );
 		}
 
-		// Renumber the whole type so pages stay disjoint: posts before this page, this page, then the rest.
-		// ponytail: loads every ID and menu_order of the type; fine for thousands, batch it for far more.
+		if ( is_post_type_hierarchical( $type ) ) {
+			// The parent comes from the database, never from the request. Same parent, whole group, or nothing.
+			$siblings = self::rows( $type, array_key_first( $parents ) );
+			if ( count( $parents ) > 1 || count( $siblings ) !== count( $ids ) || count( array_unique( $ids ) ) !== count( $ids ) || array_diff_key( array_flip( $ids ), $siblings ) ) {
+				wp_send_json_error( null, 400 );
+			}
+			$current = wp_list_pluck( $siblings, 'menu_order' );
+			$order   = $ids;
+		} else {
+			// Renumber the whole type so pages stay disjoint: posts before this page, this page, then the rest.
+			// ponytail: loads every ID and menu_order of the type; fine for thousands, batch it for far more.
+			$rest    = self::rows( $type );
+			$current = wp_list_pluck( $rest, 'menu_order' );
+			$others  = array_keys( array_diff_key( $rest, array_flip( $ids ) ) );
+			$order   = array_merge( array_slice( $others, 0, $offset ), $ids, array_slice( $others, $offset ) );
+		}
+
 		global $wpdb;
-		$rest    = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
-			$wpdb->prepare(
-				"SELECT ID, menu_order FROM {$wpdb->posts} WHERE post_type = %s AND post_status NOT IN ('trash', 'auto-draft') ORDER BY menu_order ASC, post_title ASC, ID ASC", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-				$type
-			),
-			OBJECT_K
-		);
-		$current = wp_list_pluck( $rest, 'menu_order' );
-		$others  = array_keys( array_diff_key( $rest, array_flip( $ids ) ) );
-		$order   = array_merge( array_slice( $others, 0, $offset ), $ids, array_slice( $others, $offset ) );
 		foreach ( $order as $position => $id ) {
 			if ( ! isset( $current[ $id ] ) || (int) $current[ $id ] !== $position ) {
 				$wpdb->update( $wpdb->posts, array( 'menu_order' => $position ), array( 'ID' => $id ), array( '%d' ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- menu_order only; wp_update_post would create revisions and fire save hooks for every row.
