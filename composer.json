@@ -1,6 +1,6 @@
 {
-    "name": "shakewellagency/shakewell-plugin-template",
-    "description": "Starting point for Shakewell WordPress plugins.",
+    "name": "shakewellagency/shakewell-post-order",
+    "description": "Drag-and-drop ordering of posts and custom post types on the admin list, saved to menu_order.",
     "type": "wordpress-plugin",
     "license": "GPL-2.0-or-later",
     "authors": [

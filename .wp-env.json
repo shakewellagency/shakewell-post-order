@@ -1,5 +1,7 @@
 {
   "core": null,
+  "port": 8920,
+  "testsPort": 8921,
   "phpVersion": "8.3",
   "plugins": [".", "https://downloads.wordpress.org/plugin/plugin-check.latest-stable.zip"],
   "config": {

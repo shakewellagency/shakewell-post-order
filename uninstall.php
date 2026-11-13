@@ -1,11 +1,12 @@
 <?php
 /**
- * Removes everything the plugin stored when it is deleted from the Plugins screen.
+ * Removes the plugin's option when it is deleted from the Plugins screen.
  *
- * @package Shakewell\PluginTemplate
+ * The saved order lives in each post's menu_order field and is never touched.
+ *
+ * @package Shakewell\PostOrder
  */
 
 defined( 'WP_UNINSTALL_PLUGIN' ) || exit;
 
-// Delete this plugin's options, custom tables and scheduled events here.
-// Never delete content editors created unless the plugin's settings say to.
+delete_option( 'shakewell_post_order_post_types' );
