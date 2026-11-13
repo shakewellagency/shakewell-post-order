@@ -31,24 +31,60 @@ final class Plugin {
 		add_action( 'pre_get_posts', array( self::class, 'default_order' ) );
 		add_action( 'admin_enqueue_scripts', array( self::class, 'enqueue' ) );
 		add_action( 'admin_init', array( self::class, 'columns' ) );
+		add_action( 'admin_notices', array( self::class, 'notice' ) );
 	}
 
 	/**
-	 * Enabled post types: the saved option, overridable by a filter, limited to types with an admin screen.
+	 * Post types that can be ordered, as objects keyed by name. Hierarchical types are left out: their list
+	 * is paged in PHP and grouped by parent, so a flat page order cannot describe it.
+	 *
+	 * @return \WP_Post_Type[]
+	 */
+	public static function eligible(): array {
+		return get_post_types(
+			array(
+				'public'       => true,
+				'show_ui'      => true,
+				'hierarchical' => false,
+			),
+			'objects'
+		);
+	}
+
+	/**
+	 * The post types saved on the settings screen.
+	 *
+	 * @return string[]
+	 */
+	public static function saved(): array {
+		return self::sanitize( get_option( self::OPTION, array() ) );
+	}
+
+	/**
+	 * Enabled post types: the saved option, overridable by a filter, limited to eligible types.
 	 *
 	 * @return string[]
 	 */
 	public static function enabled(): array {
-		$types = (array) apply_filters( 'shakewell_post_order_post_types', (array) get_option( self::OPTION, array() ) );
-		return array_values(
-			array_filter(
-				array_unique( array_filter( $types, 'is_string' ) ),
-				static function ( string $type ): bool {
-					$object = get_post_type_object( $type );
-					return $object && $object->public && $object->show_ui;
-				}
-			)
-		);
+		$types = (array) apply_filters( 'shakewell_post_order_post_types', self::saved() );
+		return array_values( array_intersect( array_unique( array_filter( $types, 'is_string' ) ), array_keys( self::eligible() ) ) );
+	}
+
+	/**
+	 * Whether the current list is the plain, unfiltered, default-sorted one. Dragging a filtered or re-sorted
+	 * view would renumber rows that are hidden or shown in another order.
+	 */
+	public static function plain_list(): bool {
+		$keys = array( 'orderby', 'order', 's', 'author', 'm', 'post_parent' );
+		foreach ( get_taxonomies( array( 'show_ui' => true ), 'objects' ) as $taxonomy ) {
+			$keys[] = $taxonomy->query_var ? $taxonomy->query_var : $taxonomy->name;
+		}
+		foreach ( $keys as $key ) {
+			if ( ! empty( $_GET[ $key ] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+				return false;
+			}
+		}
+		return empty( $_GET['post_status'] ) || 'all' === $_GET['post_status']; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 	}
 
 	/**
@@ -58,13 +94,7 @@ final class Plugin {
 	 * @return string[]
 	 */
 	public static function sanitize( $value ): array {
-		$known = get_post_types(
-			array(
-				'public'  => true,
-				'show_ui' => true,
-			)
-		);
-		return array_values( array_intersect( array_map( 'sanitize_key', (array) $value ), $known ) );
+		return array_values( array_intersect( array_map( 'sanitize_key', (array) $value ), array_keys( self::eligible() ) ) );
 	}
 
 	/**
@@ -93,14 +123,8 @@ final class Plugin {
 	 * Settings screen: one checkbox per post type.
 	 */
 	public static function screen(): void {
-		$types   = get_post_types(
-			array(
-				'public'  => true,
-				'show_ui' => true,
-			),
-			'objects'
-		);
-		$enabled = self::enabled();
+		$types   = self::eligible();
+		$enabled = self::saved();
 		?>
 		<div class="wrap">
 			<h1><?php esc_html_e( 'Post order', 'shakewell-post-order' ); ?></h1>
@@ -108,7 +132,10 @@ final class Plugin {
 				<?php settings_fields( 'shakewell_post_order' ); ?>
 				<fieldset>
 					<legend class="screen-reader-text"><?php esc_html_e( 'Post types with drag-and-drop ordering', 'shakewell-post-order' ); ?></legend>
-					<p><?php esc_html_e( 'Choose the post types you can reorder from their list screen. The order is saved in each item\'s menu_order field.', 'shakewell-post-order' ); ?></p>
+					<p><?php esc_html_e( 'Choose the post types you can reorder from their list screen. The order is saved in each item\'s menu_order field. Pages and other hierarchical types are not offered.', 'shakewell-post-order' ); ?></p>
+					<?php if ( self::enabled() !== $enabled ) : ?>
+						<p><strong><?php esc_html_e( 'The shakewell_post_order_post_types filter changes the post types in use, so the choice below may not apply.', 'shakewell-post-order' ); ?></strong></p>
+					<?php endif; ?>
 					<?php foreach ( $types as $type ) : ?>
 						<label>
 							<input type="checkbox" name="<?php echo esc_attr( self::OPTION ); ?>[]" value="<?php echo esc_attr( $type->name ); ?>" <?php checked( in_array( $type->name, $enabled, true ) ); ?> />
@@ -145,9 +172,22 @@ final class Plugin {
 	}
 
 	/**
+	 * Explains why ordering is off on a filtered or re-sorted list.
+	 */
+	public static function notice(): void {
+		$screen = get_current_screen();
+		if ( $screen && 'edit' === $screen->base && in_array( $screen->post_type, self::enabled(), true ) && ! self::plain_list() ) {
+			echo '<div class="notice notice-info"><p>' . esc_html__( 'Reordering is available on the unfiltered list, sorted by the default order.', 'shakewell-post-order' ) . '</p></div>';
+		}
+	}
+
+	/**
 	 * Adds the move-buttons column to each enabled type.
 	 */
 	public static function columns(): void {
+		if ( ! self::plain_list() ) {
+			return;
+		}
 		foreach ( self::enabled() as $type ) {
 			add_filter(
 				"manage_{$type}_posts_columns",
@@ -188,7 +228,7 @@ final class Plugin {
 	public static function enqueue( string $hook ): void {
 		global $wp_query;
 		$screen = get_current_screen();
-		if ( 'edit.php' !== $hook || ! $screen || ! in_array( $screen->post_type, self::enabled(), true ) ) {
+		if ( 'edit.php' !== $hook || ! $screen || ! in_array( $screen->post_type, self::enabled(), true ) || ! self::plain_list() ) {
 			return;
 		}
 		$per_page = $wp_query instanceof WP_Query ? (int) $wp_query->get( 'posts_per_page' ) : 0;
@@ -238,10 +278,24 @@ final class Plugin {
 			wp_send_json_error( null, 400 );
 		}
 
+		// Renumber the whole type so pages stay disjoint: posts before this page, this page, then the rest.
+		// ponytail: loads every ID and menu_order of the type; fine for thousands, batch it for far more.
 		global $wpdb;
-		foreach ( $ids as $i => $id ) {
-			$wpdb->update( $wpdb->posts, array( 'menu_order' => $offset + $i ), array( 'ID' => $id ), array( '%d' ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- menu_order only; wp_update_post would create revisions and fire save hooks for every row.
-			clean_post_cache( $id );
+		$rest    = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+			$wpdb->prepare(
+				"SELECT ID, menu_order FROM {$wpdb->posts} WHERE post_type = %s AND post_status NOT IN ('trash', 'auto-draft') ORDER BY menu_order ASC, post_title ASC, ID ASC", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$type
+			),
+			OBJECT_K
+		);
+		$current = wp_list_pluck( $rest, 'menu_order' );
+		$others  = array_keys( array_diff_key( $rest, array_flip( $ids ) ) );
+		$order   = array_merge( array_slice( $others, 0, $offset ), $ids, array_slice( $others, $offset ) );
+		foreach ( $order as $position => $id ) {
+			if ( ! isset( $current[ $id ] ) || (int) $current[ $id ] !== $position ) {
+				$wpdb->update( $wpdb->posts, array( 'menu_order' => $position ), array( 'ID' => $id ), array( '%d' ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- menu_order only; wp_update_post would create revisions and fire save hooks for every row.
+				clean_post_cache( $id );
+			}
 		}
 		wp_send_json_success();
 	}

@@ -18,7 +18,7 @@ The order is saved in WordPress's own `menu_order` field, so a theme or plugin c
 
 Nothing is enabled by default. Developers can set the post types in code with the `shakewell_post_order_post_types` filter, which receives the saved list.
 
-Only the posts on the page you are viewing are reordered, and their positions continue from the previous page. Saving checks a nonce and that you may edit every post involved. Deleting the plugin removes its one setting and leaves every `menu_order` value in place.
+Pages and other hierarchical post types are not offered. Reordering works on the unfiltered list sorted by the default order. Only the posts on the page you are viewing are reordered, and their positions continue from the previous page. Saving checks a nonce and that you may edit every post involved. Deleting the plugin removes its one setting and leaves every `menu_order` value in place.
 
 = External services =
 
