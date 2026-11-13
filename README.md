@@ -10,7 +10,9 @@ Drag-and-drop ordering of posts, pages and custom post types on the admin list, 
 2. Tick the post types you want to order. None are enabled by default.
 3. On each type's list screen, drag rows into place, or use the **Move up** and **Move down** buttons in the Order column. A status message announces each save to screen readers.
 
-Enabled lists sort by `menu_order`, then title, until you pick another column to sort by. Only the current page is reordered and positions continue from the previous page. The front end is untouched: read the order yourself with `orderby => menu_order`.
+Hierarchical types (with `page-attributes`) work too: an item moves only among items with the same parent, children travel with it, and the order is renumbered within that parent only. If a parent's children are split across pages of the list, those items are locked with a notice until you show more items per page.
+
+Enabled flat lists sort by `menu_order`, then title, until you pick another column to sort by. Only the current page is reordered and positions continue from the previous page. The front end is untouched: read the order yourself with `orderby => menu_order`.
 
 Set the post types from code instead with the filter, which receives the saved list:
 
