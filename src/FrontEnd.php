@@ -27,9 +27,9 @@ final class FrontEnd {
 	public static function boot(): void {
 		add_action( 'pre_get_posts', array( self::class, 'unsuppress' ) );
 		add_filter( 'posts_orderby', array( self::class, 'orderby' ), 99, 2 );
-		add_filter( 'get_previous_post_where', array( self::class, 'previous_where' ), 99 );
+		add_filter( 'get_previous_post_where', array( self::class, 'previous_where' ), 99, 5 );
 		add_filter( 'get_previous_post_sort', array( self::class, 'previous_sort' ) );
-		add_filter( 'get_next_post_where', array( self::class, 'next_where' ), 99 );
+		add_filter( 'get_next_post_where', array( self::class, 'next_where' ), 99, 5 );
 		add_filter( 'get_next_post_sort', array( self::class, 'next_sort' ) );
 	}
 
@@ -55,7 +55,7 @@ final class FrontEnd {
 	 * @param WP_Query $query The query.
 	 */
 	public static function unsuppress( WP_Query $query ): void {
-		if ( ! is_admin() && 'nav_menu_item' !== $query->get( 'post_type' ) && ! self::skip( $query ) ) {
+		if ( ! is_admin() && ! in_array( 'nav_menu_item', (array) $query->get( 'post_type' ), true ) && ! self::skip( $query ) ) {
 			$query->set( 'suppress_filters', false );
 		}
 	}
@@ -71,29 +71,44 @@ final class FrontEnd {
 		if ( ! $query instanceof WP_Query || self::skip( $query ) ) {
 			return $orderby;
 		}
-		// An explicit sort chosen in the URL, a search, and an ordering by a fixed list all win.
-		if ( ( isset( $_GET['orderby'] ) && 'menu_order' !== $_GET['orderby'] ) || ( $query->is_search() && '' !== (string) $query->get( 's' ) ) || preg_match( '/FIELD\s*\(/i', (string) $orderby ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		// An explicit sort chosen in the URL, a search, a fixed list, a random order and a query that already sorts by menu_order all win.
+		if ( ( isset( $_GET['orderby'] ) && 'menu_order' !== $_GET['orderby'] ) || ( $query->is_search() && '' !== (string) $query->get( 's' ) ) || preg_match( '/FIELD\s*\(|RAND\s*\(|menu_order/i', (string) $orderby ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 			return $orderby;
 		}
 		return '' === trim( (string) $orderby ) ? "{$wpdb->posts}.menu_order" : "{$wpdb->posts}.menu_order, {$orderby}";
 	}
 
 	/**
+	 * Which adjacent queries had their WHERE rewritten, so the sort is only swapped to match.
+	 *
+	 * @var array<string,bool>
+	 */
+	private static array $rewritten = array();
+
+	/**
 	 * Previous post: the one just before this one in menu_order, then newest first, order.
 	 *
-	 * @param string $where The WHERE clause.
+	 * @param string        $where The WHERE clause.
+	 * @param mixed         $same  Unused.
+	 * @param mixed         $excl  Unused.
+	 * @param mixed         $tax   Unused.
+	 * @param \WP_Post|null $post  The post core compares against.
 	 */
-	public static function previous_where( $where ) {
-		return self::adjacent_where( $where, '<', '>' );
+	public static function previous_where( $where, $same = null, $excl = null, $tax = null, $post = null ) {
+		return self::adjacent_where( 'previous', $where, '<', '>', $post );
 	}
 
 	/**
 	 * Next post: the one just after this one in menu_order, then newest first, order.
 	 *
-	 * @param string $where The WHERE clause.
+	 * @param string        $where The WHERE clause.
+	 * @param mixed         $same  Unused.
+	 * @param mixed         $excl  Unused.
+	 * @param mixed         $tax   Unused.
+	 * @param \WP_Post|null $post  The post core compares against.
 	 */
-	public static function next_where( $where ) {
-		return self::adjacent_where( $where, '>', '<' );
+	public static function next_where( $where, $same = null, $excl = null, $tax = null, $post = null ) {
+		return self::adjacent_where( 'next', $where, '>', '<', $post );
 	}
 
 	/**
@@ -102,7 +117,7 @@ final class FrontEnd {
 	 * @param string $sort The ORDER BY ... LIMIT clause.
 	 */
 	public static function previous_sort( $sort ) {
-		return self::enabled() && ! is_admin() ? 'ORDER BY p.menu_order DESC, p.post_date ASC LIMIT 1' : $sort;
+		return self::take( 'previous' ) ? 'ORDER BY p.menu_order DESC, p.post_date ASC LIMIT 1' : $sort;
 	}
 
 	/**
@@ -111,22 +126,39 @@ final class FrontEnd {
 	 * @param string $sort The ORDER BY ... LIMIT clause.
 	 */
 	public static function next_sort( $sort ) {
-		return self::enabled() && ! is_admin() ? 'ORDER BY p.menu_order ASC, p.post_date DESC LIMIT 1' : $sort;
+		return self::take( 'next' ) ? 'ORDER BY p.menu_order ASC, p.post_date DESC LIMIT 1' : $sort;
 	}
 
 	/**
-	 * Swaps core's date comparison for a menu_order one.
+	 * Whether the WHERE of this direction was rewritten, clearing the note.
 	 *
-	 * @param string $where  The WHERE clause.
-	 * @param string $core   Operator core compares post_date with ('<' previous, '>' next); menu_order uses the same.
-	 * @param string $on_tie Operator for post_date when menu_order is equal.
+	 * @param string $direction 'previous' or 'next'.
 	 */
-	private static function adjacent_where( $where, string $core, string $on_tie ) {
-		global $post, $wpdb;
-		if ( ! self::enabled() || is_admin() || empty( $post ) ) {
+	private static function take( string $direction ): bool {
+		$done                          = ! empty( self::$rewritten[ $direction ] );
+		self::$rewritten[ $direction ] = false;
+		return $done;
+	}
+
+	/**
+	 * Swaps core's date comparison for a menu_order one, and notes whether it found it.
+	 *
+	 * Core's own clause is left in place when it is not found, for example when another plugin changed it first.
+	 *
+	 * @param string        $direction 'previous' or 'next'.
+	 * @param string        $where     The WHERE clause.
+	 * @param string        $core      Operator core compares post_date with; menu_order uses the same.
+	 * @param string        $on_tie    Operator for post_date when menu_order is equal.
+	 * @param \WP_Post|null $post      The post core compares against.
+	 */
+	private static function adjacent_where( string $direction, $where, string $core, string $on_tie, $post ) {
+		global $wpdb;
+		self::$rewritten[ $direction ] = false;
+		$post                          = $post instanceof \WP_Post ? $post : get_post();
+		if ( ! self::enabled() || is_admin() || ! $post ) {
 			return $where;
 		}
-		return str_replace(
+		$swapped                       = str_replace(
 			"p.post_date {$core} '{$post->post_date}'",
 			$wpdb->prepare(
 				"( p.menu_order {$core} %d OR ( p.menu_order = %d AND p.post_date {$on_tie} %s ) )", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- operators come from this class, never from input.
@@ -134,7 +166,10 @@ final class FrontEnd {
 				$post->menu_order,
 				$post->post_date
 			),
-			$where
+			$where,
+			$count
 		);
+		self::$rewritten[ $direction ] = $count > 0;
+		return $count > 0 ? $swapped : $where;
 	}
 }

@@ -26,7 +26,7 @@ None.
 
 = Front end ordering =
 
-Off by default. Sites moving from Post Types Order can keep their public lists in the same order with `add_filter( 'shakewell_post_order_front_end', '__return_true' );`. It puts menu_order in front of the ORDER BY of every query outside the admin list (REST and get_posts() included, every post type) and makes the previous and next post links follow menu_order, then newest first. A query opts out with `ignore_custom_sort => true`. Searches, queries ordered by a fixed ID list and an orderby chosen in the URL are left alone.
+Off by default. Sites moving from Post Types Order can keep their public lists in the same order with `add_filter( 'shakewell_post_order_front_end', '__return_true' );`. It puts menu_order in front of the ORDER BY of every query outside the admin list (REST and get_posts() included, every post type) and makes the previous and next post links follow menu_order, then newest first. A query opts out with `ignore_custom_sort => true`. Searches, queries ordered by a fixed ID list or at random, queries that already sort by menu_order, and an orderby chosen in the URL are left alone. Because get_posts() ignores posts_* filters by default, this lifts that for the queries it covers, so other plugins' posts_* filters run on them too.
 
 == Installation ==
 

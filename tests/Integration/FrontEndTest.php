@@ -38,6 +38,13 @@ final class FrontEndTest extends WP_UnitTestCase {
 		return array_map( static fn( $p ) => $p->post_title, $posts );
 	}
 
+	public function tear_down(): void {
+		global $post;
+		$post = null;
+		unset( $_GET['orderby'] );
+		parent::tear_down();
+	}
+
 	public function test_off_by_default_core_order_is_untouched(): void {
 		$this->posts();
 		$this->assertSame( array( 'C', 'B', 'A' ), $this->titles( get_posts( array( 'numberposts' => -1 ) ) ) );
@@ -47,13 +54,12 @@ final class FrontEndTest extends WP_UnitTestCase {
 		$this->posts();
 		add_filter( 'shakewell_post_order_front_end', '__return_true' );
 		$this->assertSame( array( 'B', 'C', 'A' ), $this->titles( get_posts( array( 'numberposts' => -1 ) ) ) );
-		$same = self::factory()->post->create( array( 'post_title' => 'D', 'post_date' => '2020-01-04 00:00:00', 'menu_order' => 0 ) );
+		self::factory()->post->create( array( 'post_title' => 'D', 'post_date' => '2020-01-04 00:00:00', 'menu_order' => 0 ) );
 		$this->assertSame(
 			array( 'D', 'B', 'C', 'A' ),
 			$this->titles( get_posts( array( 'numberposts' => -1, 'orderby' => 'title', 'order' => 'DESC' ) ) ),
 			'menu_order leads and the query\'s own order breaks ties'
 		);
-		unset( $same );
 	}
 
 	public function test_a_query_can_opt_out(): void {
@@ -68,6 +74,12 @@ final class FrontEndTest extends WP_UnitTestCase {
 		$_GET['orderby'] = 'title';
 		$this->assertSame( array( 'C', 'B', 'A' ), $this->titles( get_posts( array( 'numberposts' => -1 ) ) ) );
 		unset( $_GET['orderby'] );
+	}
+
+	public function test_a_query_that_already_sorts_by_menu_order_keeps_its_direction(): void {
+		$this->posts();
+		add_filter( 'shakewell_post_order_front_end', '__return_true' );
+		$this->assertSame( array( 'A', 'C', 'B' ), $this->titles( get_posts( array( 'numberposts' => -1, 'orderby' => 'menu_order', 'order' => 'DESC' ) ) ) );
 	}
 
 	public function test_previous_and_next_follow_menu_order(): void {

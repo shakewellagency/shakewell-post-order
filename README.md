@@ -30,7 +30,9 @@ Off by default. For sites moving from Post Types Order, whose "Auto Sort" and "A
 add_filter( 'shakewell_post_order_front_end', '__return_true' );
 ```
 
-It puts `menu_order` in front of the `ORDER BY` of every query outside the admin list, for every post type, REST and WP-CLI queries and `get_posts()` included, and makes the previous and next post links follow `menu_order`, then newest first. A query opts out with `ignore_custom_sort => true`. It does not touch searches, queries ordered by a fixed ID list, or an `orderby` chosen in the URL.
+It puts `menu_order` in front of the `ORDER BY` of every query outside the admin list, for every post type, REST and WP-CLI queries and `get_posts()` included, and makes the previous and next post links follow `menu_order`, then newest first. A query opts out with `ignore_custom_sort => true`. It does not touch searches, queries ordered by a fixed ID list or at random, queries that already sort by `menu_order`, or an `orderby` chosen in the URL.
+
+Side effect to know about: `get_posts()` ignores `posts_*` filters by default (`suppress_filters`). To order it, this feature lifts that for the queries it covers, so other plugins' `posts_*` filters (multilingual, membership and similar) also run on those calls, as they do with Post Types Order. If the previous or next link's WHERE clause was changed by another plugin first, core's own order is kept for that call.
 
 ## Work on it
 
