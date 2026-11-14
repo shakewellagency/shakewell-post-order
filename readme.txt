@@ -4,7 +4,7 @@ Tags: order, sort, drag and drop, menu order
 Requires at least: 6.5
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 0.2.0
+Stable tag: 0.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -24,6 +24,10 @@ Hierarchical post types can be ordered too: an item moves only among items with 
 
 None.
 
+= Front end ordering =
+
+Off by default. Sites moving from Post Types Order can keep their public lists in the same order with `add_filter( 'shakewell_post_order_front_end', '__return_true' );`. It puts menu_order in front of the ORDER BY of every query outside the admin list (REST and get_posts() included, every post type) and makes the previous and next post links follow menu_order, then newest first. A query opts out with `ignore_custom_sort => true`. Searches, queries ordered by a fixed ID list and an orderby chosen in the URL are left alone.
+
 == Installation ==
 
 1. Upload the plugin folder to `/wp-content/plugins/`, or install it with Composer.
@@ -41,6 +45,9 @@ No. It only changes the admin list and writes `menu_order`.
 Please do not open a public issue. Follow SECURITY.md in the plugin's repository.
 
 == Changelog ==
+
+= 0.3.0 =
+* Optional front end ordering (off by default) that matches Post Types Order's Auto Sort and navigation setting, for sites switching plugins.
 
 = 0.2.0 =
 * Hierarchical post types can be ordered among siblings of the same parent.

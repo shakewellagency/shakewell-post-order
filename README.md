@@ -22,6 +22,16 @@ add_filter( 'shakewell_post_order_post_types', fn() => array( 'page', 'book' ) )
 
 Saving checks a nonce, that the post type is enabled, and `edit_post` for every post sent. Uninstalling removes only the plugin's option, never a `menu_order` value.
 
+## Front end ordering (optional)
+
+Off by default. For sites moving from Post Types Order, whose "Auto Sort" and "Apply to navigation" settings changed public lists, switch it on so nothing changes order:
+
+```php
+add_filter( 'shakewell_post_order_front_end', '__return_true' );
+```
+
+It puts `menu_order` in front of the `ORDER BY` of every query outside the admin list, for every post type, REST and WP-CLI queries and `get_posts()` included, and makes the previous and next post links follow `menu_order`, then newest first. A query opts out with `ignore_custom_sort => true`. It does not touch searches, queries ordered by a fixed ID list, or an `orderby` chosen in the URL.
+
 ## Work on it
 
 ```sh
